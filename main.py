@@ -1,17 +1,33 @@
+import os
 import tweepy
 import requests
-import schedule
-import time
 import logging
-import yaml
 from datetime import datetime
 
 # ============================================================
-# Load Config
+# Config from Environment Variables (GitHub Actions Secrets)
 # ============================================================
 
-with open("config.yaml", "r") as f:
-    config = yaml.safe_load(f)
+config = {
+    "twitter": {
+        "consumer_key":        os.environ["TWITTER_CONSUMER_KEY"],
+        "consumer_secret":     os.environ["TWITTER_CONSUMER_SECRET"],
+        "access_token":        os.environ["TWITTER_ACCESS_TOKEN"],
+        "access_token_secret": os.environ["TWITTER_ACCESS_TOKEN_SECRET"],
+        "bearer_token":        os.environ["TWITTER_BEARER_TOKEN"],
+    },
+    "nyt": {
+        "api_key": os.environ.get("NYT_API_KEY", "")
+    },
+    "bot": {
+        "history_years_back": 100,
+        "hashtags": ["#OTD", "#History"],
+        "max_tweet_length": 280
+    },
+    "logging": {
+        "level": "INFO"
+    }
+}
 
 # ============================================================
 # Logging Setup
@@ -21,8 +37,7 @@ logging.basicConfig(
     level=getattr(logging, config["logging"]["level"]),
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(config["logging"]["log_file"]),
-        logging.StreamHandler()
+        logging.StreamHandler()  # GitHub Actions captures stdout
     ]
 )
 log = logging.getLogger(__name__)
@@ -54,7 +69,6 @@ def build_tweet(text: str, year: int) -> str:
     hashtags = " ".join(config["bot"]["hashtags"])
     prefix = f"📰 #OTD in {year}: "
     max_length = config["bot"]["max_tweet_length"]
-    # Reserve space for prefix and hashtags
     available = max_length - len(prefix) - len(hashtags) - 2  # 2 for newlines
     truncated = text[:available].rsplit(" ", 1)[0]  # avoid cutting mid-word
     return f"{prefix}{truncated}\n\n{hashtags}"
@@ -64,9 +78,10 @@ def build_tweet(text: str, year: int) -> str:
 # ============================================================
 
 def fetch_wikipedia_event(date: datetime) -> str | None:
+    """Fetch a historical event from Wikipedia's On This Day feed."""
     url = f"https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/{date.month}/{date.day}"
     try:
-        headers = {"User-Agent": "100YearsAgoBot/1.0 (your@email.com)"}
+        headers = {"User-Agent": "100YearsAgoBot/1.0"}
         response = requests.get(url, timeout=10, headers=headers)
         response.raise_for_status()
         events = response.json().get("events", [])
@@ -97,10 +112,11 @@ def fetch_chronicling_america(date: datetime) -> str | None:
             item = items[0]
             title = item.get("title", "Unknown Paper")
             snippet = item.get("ocr_eng", "")[:300].strip()
-            # Clean up common OCR artifacts
-            snippet = " ".join(snippet.split())
+            snippet = " ".join(snippet.split())  # clean up OCR artifacts
             log.info("Found Chronicling America result for %s", date_str)
             return f"{title} — {snippet}"
+        else:
+            log.warning("Chronicling America returned no results for %s", date_str)
     except Exception as e:
         log.warning("Chronicling America fetch failed: %s", e)
     return None
@@ -109,25 +125,24 @@ def fetch_chronicling_america(date: datetime) -> str | None:
 def fetch_nyt_archive(date: datetime) -> str | None:
     """Fetch a headline from the NYT Archive API."""
     api_key = config.get("nyt", {}).get("api_key", "")
-    if not api_key or api_key == "YOUR_NYT_API_KEY":
+    if not api_key:
+        log.info("No NYT API key set, skipping.")
         return None
     url = f"https://api.nytimes.com/svc/archive/v1/{date.year}/{date.month}.json?api-key={api_key}"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         docs = response.json().get("response", {}).get("docs", [])
-        # Filter to articles published on this exact day
         day_str = date.strftime("%Y-%m-%d")
-        matching = [
-            d for d in docs
-            if d.get("pub_date", "").startswith(day_str)
-        ]
+        matching = [d for d in docs if d.get("pub_date", "").startswith(day_str)]
         if matching:
             article = matching[0]
             headline = article.get("headline", {}).get("main", "")
             abstract = article.get("abstract", "")
             log.info("Found NYT article for %s", day_str)
             return f"{headline}. {abstract}".strip()
+        else:
+            log.warning("NYT Archive returned no results for %s", day_str)
     except Exception as e:
         log.warning("NYT Archive fetch failed: %s", e)
     return None
@@ -173,18 +188,8 @@ def run_bot() -> None:
     post_tweet(tweet)
 
 # ============================================================
-# Scheduler
+# Entry Point
 # ============================================================
 
 if __name__ == "__main__":
-   # post_time = config["bot"]["post_time"]
-   # log.info("Bot started. Scheduled to post daily at %s", post_time)
-
- #   schedule.every().day.at(post_time).do(run_bot)
-
-    # Uncomment the line below to run immediately on startup for testing:
-     run_bot()
-
-    #while True:
-       # schedule.run_pending()
-        #time.sleep(60)
+    run_bot()
