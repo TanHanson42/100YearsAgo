@@ -147,6 +147,66 @@ def fetch_nyt_archive(date: datetime) -> str | None:
         log.warning("NYT Archive fetch failed: %s", e)
     return None
 
+
+def fetch_wikipedia_births(date: datetime) -> str | None:
+    """Fetch a notable birth from Wikipedia's On This Day feed."""
+    url = f"https://en.wikipedia.org/api/rest_v1/feed/onthisday/births/{date.month}/{date.day}"
+    try:
+        headers = {"User-Agent": "100YearsAgoBot/1.0"}
+        response = requests.get(url, timeout=10, headers=headers)
+        response.raise_for_status()
+        births = response.json().get("births", [])
+        matching = [b for b in births if b.get("year") == date.year]
+        if matching:
+            person = matching[0]
+            log.info("Found Wikipedia birth for %s", date.strftime("%Y-%m-%d"))
+            return f"Born on this day in {date.year}: {person['text']}"
+        else:
+            log.warning("No Wikipedia births matched the year %d for %s", date.year, date.strftime("%B %d"))
+    except Exception as e:
+        log.warning("Wikipedia births fetch failed: %s", e)
+    return None
+
+
+def fetch_wikipedia_deaths(date: datetime) -> str | None:
+    """Fetch a notable death from Wikipedia's On This Day feed."""
+    url = f"https://en.wikipedia.org/api/rest_v1/feed/onthisday/deaths/{date.month}/{date.day}"
+    try:
+        headers = {"User-Agent": "100YearsAgoBot/1.0"}
+        response = requests.get(url, timeout=10, headers=headers)
+        response.raise_for_status()
+        deaths = response.json().get("deaths", [])
+        matching = [d for d in deaths if d.get("year") == date.year]
+        if matching:
+            person = matching[0]
+            log.info("Found Wikipedia death for %s", date.strftime("%Y-%m-%d"))
+            return f"Died on this day in {date.year}: {person['text']}"
+        else:
+            log.warning("No Wikipedia deaths matched the year %d for %s", date.year, date.strftime("%B %d"))
+    except Exception as e:
+        log.warning("Wikipedia deaths fetch failed: %s", e)
+    return None
+
+
+def fetch_history_api(date: datetime) -> str | None:
+    """Fetch a historical event from the History API (byabbe.se) — no key required."""
+    url = f"https://history.muffinlabs.com/date/{date.month}/{date.day}"
+    try:
+        headers = {"User-Agent": "100YearsAgoBot/1.0"}
+        response = requests.get(url, timeout=10, headers=headers)
+        response.raise_for_status()
+        events = response.json().get("data", {}).get("Events", [])
+        matching = [e for e in events if e.get("year") == str(date.year)]
+        if matching:
+            event = matching[0]
+            log.info("Found History API event for %s", date.strftime("%Y-%m-%d"))
+            return event["text"]
+        else:
+            log.warning("History API had no events matching year %d for %s", date.year, date.strftime("%B %d"))
+    except Exception as e:
+        log.warning("History API fetch failed: %s", e)
+    return None
+
 # ============================================================
 # Core Bot Logic
 # ============================================================
@@ -155,6 +215,9 @@ def fetch_content(date: datetime) -> tuple[str, int] | tuple[None, None]:
     """Try each data source in order, return (content, year) or (None, None)."""
     sources = [
         fetch_wikipedia_event,
+        fetch_history_api,
+        fetch_wikipedia_births,
+        fetch_wikipedia_deaths,
         fetch_nyt_archive,
         fetch_chronicling_america,
     ]
